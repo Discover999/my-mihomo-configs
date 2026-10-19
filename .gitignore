@@ -1,0 +1,10 @@
+# 本地实际配置与运行数据
+config.yaml
+*.local.yaml
+data/
+proxy_provider/
+ruleset/
+ui/
+
+# 未经脱敏的原始截图（含机场名称）
+png/select.png

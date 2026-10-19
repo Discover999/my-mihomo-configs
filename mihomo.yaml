@@ -1,0 +1,804 @@
+# ==================================================================================
+# mihomo 通用配置 · 多客户端兼容版
+# ----------------------------------------------------------------------------------
+# 兼容：Mihomo / Clash.Meta 内核，以及 FlClash、FlyClash、Clash Party 等客户端
+# 场景：本地导入使用；端口、TUN、DNS、控制器等由客户端界面接管
+# 规则：MetaCubeX/meta-rules-dat + bett-rules（补充项）
+#
+# 使用前必改：
+#   · 「一、订阅」中的 '订阅链接' 换成自己的机场订阅地址
+#   · 直接运行裸内核时，取消注释 external-controller / secret；
+#     需要面板时再取消 external-ui 相关项
+#   订阅 token 等同于账号凭证，请勿提交真实配置。
+#
+# 导入方式：客户端「配置 / 订阅」→「导入本地文件」；不要作为远程订阅上传
+# 裸内核：mihomo -d <数据目录> -f mihomo.yaml
+# 版本要求：Mihomo v1.18+（mrs / DNS rule-set）；旧版 Clash.Meta 见 README
+# 详细说明与客户端差异：见 README.md
+# ==================================================================================
+
+
+# ==================================================================================
+# 一、订阅（必改：填入自己的机场订阅链接）
+# ==================================================================================
+
+# 订阅公共模板（锚点，勿删）：被下方所有 provider 引用
+provider_common: &provider_common
+  type: http
+  interval: 21600                        # 每 6 小时自动更新订阅（单位：秒）
+  proxy: DIRECT                          # 拉取订阅时走直连；订阅域名被墙时改为 '默认代理'
+                                         # （需已有可用节点；首次启动可能因无节点而失败）
+  exclude-type: 'direct|reject|rematch'  # 排除订阅中内置的 DIRECT/REJECT 类占位节点
+  exclude-filter: '(?i)(群|返利|循环|官网|客服|网站|网址|获取|订阅|流量|到期|机场|下次|版本|官址|备用|过期|已用|联系|邮箱|工单|贩卖|通知|倒卖|防止|国内|地址|频道|电报|无法|说明|使用|提示|访问|支持|教程|关注|更新|作者|加入|超时|收藏|优惠|福利|邀请|好友|失联|选择|剩余|公益|发布|通路|登录|禁止|定时|渠道|牢记|永久|余额|阁下|本站|刷新|导航|建议|重置|以下|过滤|客户端|⚠️|@|t\.me/\+|\bexpire\b|\bhttps?://|\.com|\btraffic\b)' # 过滤「剩余流量/到期时间/客户端下载」等信息节点
+  health-check: # 节点连通性检测
+    enable: true
+    url: 'https://www.gstatic.com/generate_204'     # 轻量 204，国内外皆可达
+    interval: 300                        # 每 5 分钟检测一次（单位：秒）
+    lazy: true                           # 只检测被使用的节点，节省资源
+    expected-status: 204
+
+# 订阅列表：一个机场一组，provider 名称可自定义（仅作标识，不影响策略组）。
+# 多订阅时务必保留 override.additional-prefix，避免不同机场节点重名。
+# path 为相对路径，相对客户端/内核的数据目录，用于缓存订阅结果。
+proxy-providers:
+  机场A:
+    <<: *provider_common
+    url: '订阅链接' # ← 换成你的订阅链接
+    path: ./proxy_provider/airport-a.yaml
+    override:
+      additional-prefix: '[A]' # 节点名前缀，多订阅防重名；单订阅可删除
+
+  机场B:
+    <<: *provider_common
+    url: '订阅链接'
+    path: ./proxy_provider/airport-b.yaml
+    override:
+      additional-prefix: '[B]'
+
+  # 需要更多订阅时，复制上面任意一组，修改名称、url、path、prefix。
+  # 不需要的订阅整组删除即可；订阅名只作标识，不影响策略组。
+
+
+# ==================================================================================
+# 二、基础设置（入站端口 / 局域网 / 控制面板）
+# ==================================================================================
+
+mixed-port: 7890            # HTTP + SOCKS5 混合端口；GUI 客户端通常以自身端口设置为准
+allow-lan: true             # 局域网共享开关；GUI 客户端通常会用界面设置覆盖
+bind-address: '*'           # 监听所有网卡；客户端可能按自身设置覆盖
+ipv6: false                 # 关闭 IPv6（减少 DNS 泄漏面）；宽带支持时可改为 true
+mode: rule                  # 规则模式
+log-level: silent           # 日志级别；排查问题时可临时改为 warning / info
+unified-delay: true         # 统一延迟计算（剔除握手差异，测速更真实）
+tcp-concurrent: true        # TCP 并发连接（多 IP 节点择优）
+find-process-mode: 'off'    # 移动端不支持进程匹配；桌面端可按需改为 'strict'
+global-ua: 'clash.meta'     # 拉取订阅时的 UA；部分客户端会用自己的 UA 覆盖
+
+# --- 控制面板 / API（默认交由 GUI 客户端管理） ---
+# FlClash / Clash Party / FlyClash 通常会在运行时生成自己的控制端口与密钥，
+# 配置中重复设置可能导致端口冲突或面板连接失败，因此默认注释。
+# 直接运行 mihomo 内核、需要独立 API / 面板时取消注释，并务必设置 secret。
+# external-controller: '0.0.0.0:9090'
+# secret: 'REPLACE_WITH_A_LONG_RANDOM_STRING'
+# external-ui: ui
+# external-ui-url: "https://github.com/Zephyruso/zashboard/releases/latest/download/dist.zip"
+
+# --- 访问控制（可选，局域网环境建议按需开启） ---
+# 允许使用代理端口的来源网段，默认不限制。注意 Docker bridge 网络会做源地址
+# NAT，可能看不到真实客户端 IP；需要精确控制时优先使用 authentication。
+# lan-allowed-ips: ['192.168.1.0/24']
+# 禁止使用的来源网段（黑名单优先于白名单）
+# lan-disallowed-ips: ['192.168.1.100/32']
+# 代理端口用户名密码，HTTP / SOCKS5 / mixed 均生效；开启后客户端需填写同样的
+# 账号密码。存在 NAT（如 Docker 桥接网络）时比 IP 白名单更可靠。
+# authentication: ['user:password']
+# 配合 authentication 使用：这些 IP 访问代理端口时免账号密码验证
+# （不会绕过面板 secret）。
+# skip-auth-prefixes: ['127.0.0.1/8', '::1/128']
+
+profile:
+  store-selected: true      # 记忆手动切换的策略组选择（需客户端/内核持久化数据目录）
+  store-fake-ip: true       # 持久化 fake-ip 映射（重启后不失域名映射）
+
+# --- 时间同步：VMess / Trojan / Hysteria 等协议的认证依赖时间准确，
+#     偏差过大会直接导致节点全部失灵，因此保持开启 ---
+ntp:
+  enable: true
+  write-to-system: false      # 写回系统时间需要高权限；一般保持 false 即可
+  server: 'ntp.aliyun.com'
+  port: 123
+  interval: 60                # 每 60 分钟校时一次（单位：分钟，非秒）
+
+# --- 域名嗅探：从流量中嗅探真实域名，提升分流准确性 ---
+sniffer:
+  enable: true
+  parse-pure-ip: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true
+    TLS:
+      ports: [443, 8443]
+  force-domain:
+    - "+.v2ex.com"
+  skip-domain:
+    - "Mijia Cloud"
+    - 'dlg.io.mi.com'       # 米家设备
+    - '+.push.apple.com'    # 苹果推送
+    - "+.apple.com"
+    - "+.wechat.com"
+    - "+.qpic.cn"
+    - "+.qq.com"
+    - "+.wechatapp.com"
+    - "+.vivox.com"
+    - "+.oray.com"
+    - "+.sunlogin.net"
+
+# --- TUN 虚拟网卡 ---
+# GUI 客户端会以界面开关覆盖本段；默认关闭，裸内核运行时才完全生效。
+# 容器内 TUN 只影响容器自身流量，需要 NET_ADMIN 与 /dev/net/tun。
+# stack：mixed 跨平台兼容性最好。
+tun:
+  enable: false
+  stack: mixed              # system | gvisor | mixed
+  device: mihomo            # 虚拟网卡名称（Windows 上会自动生成适配器）
+  auto-route: true          # 自动配置路由表，把流量导入 TUN
+  auto-detect-interface: true # 自动探测出口网卡，避免指定错误导致断网
+  auto-redirect: false      # 仅 Linux 支持；Windows/macOS 保持 false
+  dns-hijack:               # 劫持 DNS 请求交给内核处理，防泄漏
+    - 'any:53'
+  strict-route: false       # 严格路由，可防止部分流量绕过；开启需更高权限
+  mtu: 1500                 # 有断流/大包丢失问题时可尝试降到 1400 以下
+
+
+# ==================================================================================
+# 三、DNS（国内外分流解析，防泄漏）
+# ==================================================================================
+# 局域网使用说明：
+#   · 客户端使用 HTTP 代理时，域名天然由 mihomo 代理解析，无需给局域网设备
+#     单独配置 DNS。
+#   · 客户端使用 SOCKS5 时，请启用「远程 DNS / Remote DNS」，否则域名会由客户端
+#     本地解析，可能被污染或拿到 fake-ip。
+#   · 不要把局域网设备的 DNS 直接指向本服务：fake-ip 返回的 198.18.x.x 只有
+#     经由 mihomo 代理时才有意义。
+
+# 四个 DNS 服务器池（锚点，勿删）：
+#   dns_default       → 引导解析（仅用于解析下方 DoH/DoT 服务器自身的域名，纯 IP 直连）
+#   dns_proxy_server  → 节点服务器域名解析（国内 DNS 直连，防止节点域名被污染）
+#   dns_foreign       → 国外域名解析（DoH 经「默认代理」走代理，防污染）
+#   dns_china         → 国内域名解析（直连）
+dns_default: &dns_default ['223.5.5.5#DIRECT', '119.29.29.29#DIRECT']
+dns_proxy_server: &dns_proxy_server ['https://223.5.5.5/dns-query#DIRECT', 'https://doh.pub/dns-query#DIRECT']
+dns_foreign: &dns_foreign ['https://cloudflare-dns.com/dns-query#默认代理', 'https://dns.google/dns-query#默认代理']
+dns_china: &dns_china ['https://223.5.5.5/dns-query#DIRECT', 'https://doh.pub/dns-query#DIRECT']
+
+dns:
+  enable: true
+  ipv6: false
+  use-hosts: true
+  use-system-hosts: true
+  cache-algorithm: arc
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/15
+  fake-ip-filter: # 以下域名不返回 fake-ip，直接返回真实 IP
+    - 'rule-set:private'
+    - 'rule-set:fakeip_filter'
+    - 'rule-set:geolocation-cn'
+    - 'rule-set:googlefcm' # Google 推送长连接对 fake-ip 兼容性差，返回真实 IP
+  default-nameserver: *dns_default
+  proxy-server-nameserver: *dns_proxy_server
+  nameserver: *dns_foreign
+  nameserver-policy:
+    'rule-set:private': 'system'
+    'rule-set:douyin': ['system', '180.184.1.1', '180.184.2.2'] # 抖音走运营商 DNS 优选 CDN
+    'rule-set:cn': *dns_china
+  direct-nameserver: *dns_china
+  direct-nameserver-follow-policy: true
+
+hosts:
+  # DNS 服务器域名直连解析（避免鸡生蛋问题）
+  'doh.pub': ['1.12.12.12', '120.53.53.53']
+  'cloudflare-dns.com': ['1.1.1.1', '1.0.0.1']
+  'dns.google': ['8.8.8.8', '8.8.4.4']
+
+  # 解决谷歌商店（国区）无法下载的问题
+  'services.googleapis.cn': 'services.googleapis.com'
+
+  # 屏蔽哔哩哔哩 PCDN，解决视频 / 直播卡顿
+  '+.mcdn.bilivideo.com': ['0.0.0.0']
+  '+.mcdn.bilivideo.cn': ['0.0.0.0']
+  '+.edge.mountaintoys.cn': ['0.0.0.0']
+  '+.h2.smtcdns.net': ['0.0.0.0']
+
+
+# ==================================================================================
+# 四、策略组
+# ==================================================================================
+
+# 策略组公共模板（锚点，勿删）：
+#   group_select → 手动选择组参数（面板显示延迟、剔除失活节点）
+#   group_auto   → 自动择优组参数（url-test 延迟测速，选定最快节点）
+#
+# 【url-test 与 smart 的差别】
+#   url-test 每 interval 秒对所有候选节点发起 url 测速，选用延迟最低的一个。
+#   参数含义：tolerance（容差，延迟差在此范围内不切换，可减轻抖动）、
+#             max-failed-times（连续失败次数上限后重新测速）
+#
+# 【tolerance 取值参考（社区实践）】
+#   0    → 内核实际默认值，极为敏感，节点间会频繁切换，不建议裸用
+#   20   → 延迟敏感场景（游戏加速）
+#   50   → 社区主流，日常浏览 / 视频通用（本配置采用）
+#   100  → 节点多且延迟相近时更稳，代价是可能长期停留在次优节点
+#   提示：容差只影响「切换门槛」，不影响测速本身；调大不会让节点变慢，
+#         只是减少切换频率。若发现面板里出口频繁跳动，就往上调。
+group_select: &group_select
+  {
+    type: select,
+    interval: 600,
+    timeout: 3000,
+    max-failed-times: 3,
+    empty-fallback: REJECT,
+    url: 'https://www.gstatic.com/generate_204',
+    lazy: true,
+  }
+group_auto: &group_auto
+  {
+    type: url-test, # 标准内核：按延迟测速择优
+    interval: 300,
+    timeout: 3000,
+    tolerance: 50, # 延迟容差(ms)：新节点需比当前快 50ms 以上才切换，抑制抖动。
+                   # 注意：mihomo 源码里此值零值初始化为 0，官方默认并非 50，
+                   # 不写就等于 0ms（极敏感、易频繁切换），务必显式设置。
+                   # 50 为社区主流值；节点延迟密集时可调大到 100，游戏场景可调小到 20。
+    max-failed-times: 3,
+    empty-fallback: REJECT,
+    url: 'https://www.gstatic.com/generate_204',
+    lazy: true,
+    include-all: true,
+    exclude-type: 'DIRECT',
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Auto.svg',
+    hidden: true,
+  }
+
+# 分流组的出口列表（锚点，勿删）：新增地区后记得同步加入这两个列表
+out_proxies: &out_proxies # 纯代理出口
+  {
+    proxies:
+      [
+        '默认代理',
+        '手动选择',
+        '智能选择',
+        '负载均衡',
+        '香港',
+        '日本',
+        '美国',
+        '新加坡',
+        '台湾省',
+        '低倍率节点',
+        '高倍率节点',
+        '其他节点',
+      ],
+  }
+out_proxies_direct: &out_proxies_direct # 代理出口 + 直连（用于国内有服务的厂商）
+  {
+    proxies:
+      [
+        '默认代理',
+        '手动选择',
+        '智能选择',
+        '负载均衡',
+        'DIRECT',
+        '香港',
+        '日本',
+        '美国',
+        '新加坡',
+        '台湾省',
+        '低倍率节点',
+        '高倍率节点',
+        '其他节点',
+      ],
+  }
+
+# 地区 / 倍率过滤器（锚点，勿删）：按订阅节点名称匹配；内核使用 regexp2 引擎，支持零宽断言
+# 新增地区（如韩国）三步：
+#   1. 在此加一行：kr: &filter_kr { filter: '(?i)(🇰🇷|韩国|首尔|春川|(?<![A-Za-z])KO?R(?![A-Za-z])|korea)' }
+#   2. 在下方 proxy-groups 中仿照「香港」复制两个组（改名、改引用、换图标）
+#   3. 把 '韩国' 加入 out_proxies / out_proxies_direct / 「默认代理」三处列表
+filters:
+  hk: &filter_hk { filter: '(?i)(🇭🇰|香港|(?<![A-Za-z])HKG?(?![A-Za-z])|hong\s*kong)' }
+  jp: &filter_jp { filter: '(?i)(🇯🇵|日本|东京|大阪|京都|(?<![A-Za-z])JPN?(?![A-Za-z])|japan)' }
+  us: &filter_us { filter: '(?i)(🇺🇸|美国|纽约|洛杉矶|旧金山|芝加哥|休斯顿|迈阿密|西雅图|波士顿|华盛顿|拉斯维加斯|圣何塞|圣地亚哥|(?<![A-Za-z])USA?(?![A-Za-z])|america|united\s*states)' }
+  sg: &filter_sg { filter: '(?i)(🇸🇬|新加坡|狮城|(?<![A-Za-z])SGP?(?![A-Za-z])|singapore)' }
+  tw: &filter_tw { filter: '(?i)(🇹🇼|台湾|台北|高雄|(?<![A-Za-z])TWN?(?![A-Za-z])|taiwan)' }
+  low: &filter_low # 低倍率（≤0.5x / 免费 / 官方活动节点）
+    {
+      filter: '(?i)(?:[*×✕✖⨯⨉x]\s*0\.\d+|0\.\d+\s*(?:倍|[*×✕✖⨯⨉x]))',
+    }
+  high: &filter_high # 高倍率（≥2x）
+    {
+      filter: '(?i)(?:[*×✕✖⨯⨉x]\s*(?:[2-9]\d*|[1-9]\d+)(?:\.\d+)?|(?:[2-9]\d*|[1-9]\d+)(?:\.\d+)?\s*(?:倍|[*×✕✖⨯⨉x]))',
+    }
+  other: &filter_other # 「其他节点」= 排除上面全部地区
+    {
+      exclude-filter: '(?i)(🇭🇰|香港|(?<![A-Za-z])HKG?(?![A-Za-z])|hong\s*kong|🇯🇵|日本|东京|大阪|京都|(?<![A-Za-z])JPN?(?![A-Za-z])|japan|🇺🇸|美国|纽约|洛杉矶|旧金山|芝加哥|休斯顿|迈阿密|西雅图|波士顿|华盛顿|拉斯维加斯|圣何塞|圣地亚哥|(?<![A-Za-z])USA?(?![A-Za-z])|america|united\s*states|🇸🇬|新加坡|狮城|(?<![A-Za-z])SGP?(?![A-Za-z])|singapore|🇹🇼|台湾|台北|高雄|(?<![A-Za-z])TWN?(?![A-Za-z])|taiwan)',
+      exclude-type: 'direct',
+    }
+  ai: &filter_ai # AI 解锁节点：按节点名关键词筛选
+    # 各机场命名习惯不同，请按你的实际节点名增删关键词（用 | 分隔，(?i) 表示忽略大小写）
+    # 命中即入选。常见写法：GPT / AI / 解锁 / 原生 / 流媒体 / Netflix ...
+    # 若误选，可用下方 exclude-filter 再加排除词
+    {
+      filter: '(?i)(gpt|chatgpt|openai|claude|anthropic|gemini|bard|copilot|解锁ai|ai解锁|家宽|专线)',
+    }
+  media: &filter_media # 流媒体解锁节点：按节点名关键词筛选
+    # 与 AI 筛选部分重合，但更聚焦视频/音乐平台，避免把纯 AI 节点混进来
+    {
+      filter: '(?i)(netflix|nf|disney|disney\+|hbo|max|hulu|prime\s*video|amazon|youtube|yt|spotify|tidal|appletv|apple\s*tv|emby|plex|stream|流媒体|解锁|unlock|影视|剧场|动画|番剧|bilibili|哔哩|巴哈|bahamut|原生|native|专线|iepl|iplc|premium|高级)',
+    }
+
+proxy-groups:
+  # ===== 1. 基础出口（日常只需关注「默认代理」） =====
+
+  - name: '默认代理' # 总出口：按地区选，或交给手动 / 智能 / 负载均衡
+    <<: *group_select
+    proxies:
+      [
+        '香港',
+        '日本',
+        '美国',
+        '新加坡',
+        '台湾省',
+        '手动选择',
+        '智能选择',
+        '负载均衡',
+        '低倍率节点',
+        '高倍率节点',
+        '其他节点',
+      ]
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Proxy.svg'
+
+  - name: '手动选择' # 手动指定任意单一节点
+    <<: *group_select
+    include-all: true
+    exclude-type: 'DIRECT'
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Static.svg'
+
+  - name: '智能选择' # 全部节点延迟测速择优（隐藏）
+    <<: *group_auto
+
+  - name: '负载均衡' # 同一目标地址尽量固定走同一节点（隐藏）
+    type: load-balance
+    strategy: 'sticky-sessions'
+    interval: 300
+    timeout: 3000
+    max-failed-times: 3
+    empty-fallback: REJECT
+    url: 'https://www.gstatic.com/generate_204'
+    lazy: true
+    include-all: true
+    exclude-type: 'DIRECT'
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/RoundRobin.svg'
+    hidden: true
+
+  # ===== 2. 服务分流（想改某服务的出口，改 default-selected 一行即可） =====
+
+  - name: 'Google' # Google 全家桶（含 FCM 推送）
+    <<: [*group_select, *out_proxies]
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Google.svg'
+
+  - name: 'AI' # 国外 AI 服务（默认走筛选出的「AI 节点」，也可手动切其他出口）
+    <<: *group_select
+    proxies: # 独立出口列表：AI 节点优先，其余为备选
+      [
+        'AI 节点',
+        '默认代理',
+        '手动选择',
+        '智能选择',
+        '美国',
+        '日本',
+        '新加坡',
+        '香港',
+        '台湾省',
+        'DIRECT',
+      ]
+    default-selected: 'AI 节点'
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/OpenAI.svg'
+
+  - name: 'GitHub' # GitHub（独立出口，便于单独切换节点加速 clone / release 下载）
+    <<: [*group_select, *out_proxies]
+    icon: 'https://fastly.jsdelivr.net/gh/Koolson/Qure@master/IconSet/Color/GitHub.png'
+
+  - name: '流媒体' # 未命中前面服务规则的国外视频/音乐流量兜底
+    <<: *group_select
+    proxies: # 独立出口列表：流媒体节点优先，其余为备选
+      [
+        '流媒体节点',
+        '默认代理',
+        '手动选择',
+        '智能选择',
+        '美国',
+        '日本',
+        '新加坡',
+        '香港',
+        '台湾省',
+        'DIRECT',
+      ]
+    default-selected: '流媒体节点'
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Netflix.svg'
+
+  - name: 'Microsoft'
+    <<: [*group_select, *out_proxies_direct]
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Microsoft.svg'
+
+  - name: 'Apple'
+    <<: [*group_select, *out_proxies_direct]
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Apple.svg'
+
+  - name: 'Telegram'
+    <<: [*group_select, *out_proxies]
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Telegram.svg'
+
+  - name: 'Steam'
+    <<: [*group_select, *out_proxies_direct]
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Steam.svg'
+
+  - name: 'TikTok'
+    <<: [*group_select, *out_proxies]
+    default-selected: '日本'
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/TikTok.svg'
+
+  - name: 'Twitter'
+    <<: [*group_select, *out_proxies]
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Twitter.svg'
+
+  - name: 'AdBlock' # 广告拦截方式
+    <<: *group_select
+    proxies: ['REJECT', 'REJECT-DROP', 'PASS']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/AdBlock.svg'
+
+  - name: '漏网之鱼' # 未命中任何规则的流量
+    <<: [*group_select, *out_proxies_direct]
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Stack.svg'
+
+  # ===== 3. 地区（每组 = 自动择优子组 + 该地区全部节点） =====
+
+  - name: '香港'
+    <<: [*group_select, *filter_hk]
+    include-all: true
+    proxies: ['香港-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/HongKong.svg'
+  - name: '香港-自动择优'
+    <<: [*group_auto, *filter_hk]
+
+  - name: '日本'
+    <<: [*group_select, *filter_jp]
+    include-all: true
+    proxies: ['日本-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Japan.svg'
+  - name: '日本-自动择优'
+    <<: [*group_auto, *filter_jp]
+
+  - name: '美国'
+    <<: [*group_select, *filter_us]
+    include-all: true
+    proxies: ['美国-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/America.svg'
+  - name: '美国-自动择优'
+    <<: [*group_auto, *filter_us]
+
+  - name: '新加坡'
+    <<: [*group_select, *filter_sg]
+    include-all: true
+    proxies: ['新加坡-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Singapore.svg'
+  - name: '新加坡-自动择优'
+    <<: [*group_auto, *filter_sg]
+
+  - name: '台湾省'
+    <<: [*group_select, *filter_tw]
+    include-all: true
+    proxies: ['台湾省-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Taiwan.svg'
+  - name: '台湾省-自动择优'
+    <<: [*group_auto, *filter_tw]
+
+  # ===== 4. AI 解锁节点（按名称关键词筛选，供「AI」组默认使用） =====
+
+  - name: 'AI 节点' # 从全部订阅中筛出名字含 AI/解锁/原生等关键词的节点
+    <<: [*group_select, *filter_ai]
+    include-all: true
+    proxies: ['AI 节点-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/OpenAI.svg'
+  - name: 'AI 节点-自动择优'
+    <<: [*group_auto, *filter_ai]
+
+  # ===== 5. 流媒体解锁节点（按名称关键词筛选，供「流媒体」组默认使用） =====
+  - name: '流媒体节点' # 从全部订阅中筛出名字含 Netflix/Disney/解锁等关键词的节点
+    <<: [*group_select, *filter_media]
+    include-all: true
+    proxies: ['流媒体节点-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/YouTube.svg'
+  - name: '流媒体节点-自动择优'
+    <<: [*group_auto, *filter_media]
+
+  # ===== 6. 倍率与其他 =====
+
+  - name: '低倍率节点'
+    <<: [*group_select, *filter_low]
+    include-all: true
+    proxies: ['低倍率节点-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Available.svg'
+  - name: '低倍率节点-自动择优'
+    <<: [*group_auto, *filter_low]
+
+  - name: '高倍率节点'
+    <<: [*group_select, *filter_high]
+    include-all: true
+    proxies: ['高倍率节点-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/Airport.svg'
+  - name: '高倍率节点-自动择优'
+    <<: [*group_auto, *filter_high]
+
+  - name: '其他节点' # 不属于上述任何地区的节点
+    <<: [*group_select, *filter_other]
+    include-all: true
+    proxies: ['其他节点-自动择优']
+    icon: 'https://fastly.jsdelivr.net/gh/AIsouler/MyClash@main/Icons/svg/WorldMap.svg'
+  - name: '其他节点-自动择优'
+    <<: [*group_auto, *filter_other]
+
+
+# ==================================================================================
+# 五、规则集（全部 mrs 二进制格式，经 jsDelivr 分发）
+# ==================================================================================
+# · 首次启动会下载全部规则集，之后每 24 小时检查更新一次。
+# · path 为相对路径（相对客户端/内核数据目录），首次启动下载后会缓存。
+# · mrs 为 mihomo 专用二进制格式，不能直接用文本编辑器查看。
+#
+# 【旧版内核降级说明（2023 年及更早的 Clash.Meta）】
+#   旧版内核不支持 mrs 与 DNS 中的 rule-set 语法，如必须使用请：
+#   1. 将下方所有 .mrs 地址改为 .yaml，并把 ruleset 模板里的 format: mrs 去掉；
+#   2. 删除 dns.fake-ip-filter / nameserver-policy 中的 'rule-set:...' 条目；
+#   3. 删除 dns.direct-nameserver-follow-policy；
+#   4. 旧版可能不支持 proxy-providers.override，多订阅节点可能重名。
+#   注：降级会损失部分分流精度与启动速度，建议优先升级内核。
+
+# 规则集公共模板（锚点，勿删）：域名类 / IP 类各一个，被下方所有规则集引用
+ruleset_domain: &ruleset_domain { type: http, format: mrs, interval: 86400, behavior: domain }
+ruleset_ip: &ruleset_ip { type: http, format: mrs, interval: 86400, behavior: ipcidr }
+
+rule-providers:
+  # ---------- 直连类 ----------
+
+  private: # 私有网络域名
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/private.mrs'
+    path: './ruleset/private.mrs'
+  private_ip: # 私有网络 IP 段
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/private.mrs'
+    path: './ruleset/private_ip.mrs'
+  geolocation-cn: # 国内域名（含未分类，范围比 cn 大）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/geolocation-cn.mrs'
+    path: './ruleset/geolocation-cn.mrs'
+  cn: # 国内核心域名（QUIC 白名单 + DNS 分流用）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/cn.mrs'
+    path: './ruleset/cn.mrs'
+  cn_ip: # 国内 IP 段
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/cn.mrs'
+    path: './ruleset/cn_ip.mrs'
+  games_cn: # 国内游戏平台（已含 Steam 国内下载 CDN）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-games@cn.mrs'
+    path: './ruleset/category-games@cn.mrs'
+  epicgames: # Epic 游戏平台
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/epicgames.mrs'
+    path: './ruleset/epicgames.mrs'
+  nvidia_cn: # NVIDIA 国内服务
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/nvidia@cn.mrs'
+    path: './ruleset/nvidia@cn.mrs'
+  apple_cn: # Apple 国内服务
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple-cn.mrs'
+    path: './ruleset/apple-cn.mrs'
+  microsoft_cn: # Microsoft 国内服务（官方仓库无此分类，取自 bett-rules）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/appshubcc/bett-rules@meta/geo/geosite/microsoft@cn.mrs'
+    path: './ruleset/microsoft@cn.mrs'
+
+  # ---------- 代理类 ----------
+
+  geolocation-!cn: # 国外域名兜底
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/geolocation-!cn.mrs'
+    path: './ruleset/geolocation-!cn.mrs'
+  google: # Google 全家桶（FCM 推送域名也含在内）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/google.mrs'
+    path: './ruleset/google.mrs'
+  google_ip:
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/google.mrs'
+    path: './ruleset/google_ip.mrs'
+  ai: # 国外 AI 服务（OpenAI / Anthropic / Gemini 等）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-ai-!cn.mrs'
+    path: './ruleset/ai.mrs'
+  github: # GitHub（直接走「默认代理」，便于 clone / release 下载）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/github.mrs'
+    path: './ruleset/github.mrs'
+  microsoft:
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/microsoft.mrs'
+    path: './ruleset/microsoft.mrs'
+  microsoft_ip: # 官方仓库无此 geoip，取自 bett-rules
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/appshubcc/bett-rules@meta/geo/geoip/microsoft.mrs'
+    path: './ruleset/microsoft_ip.mrs'
+  apple:
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/apple.mrs'
+    path: './ruleset/apple.mrs'
+  apple_ip: # 官方仓库无此 geoip，取自 bett-rules
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/appshubcc/bett-rules@meta/geo/geoip/apple.mrs'
+    path: './ruleset/apple_ip.mrs'
+  telegram:
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/telegram.mrs'
+    path: './ruleset/telegram.mrs'
+  telegram_ip:
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/telegram.mrs'
+    path: './ruleset/telegram_ip.mrs'
+  steam:
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/steam.mrs'
+    path: './ruleset/steam.mrs'
+  steam_ip: # 官方仓库无此 geoip，取自 bett-rules
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/appshubcc/bett-rules@meta/geo/geoip/steam.mrs'
+    path: './ruleset/steam_ip.mrs'
+  tiktok:
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/tiktok.mrs'
+    path: './ruleset/tiktok.mrs'
+  tiktok_ip: # 官方仓库无此 geoip，取自 bett-rules
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/appshubcc/bett-rules@meta/geo/geoip/tiktok.mrs'
+    path: './ruleset/tiktok_ip.mrs'
+  twitter:
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/twitter.mrs'
+    path: './ruleset/twitter.mrs'
+  twitter_ip:
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/twitter.mrs'
+    path: './ruleset/twitter_ip.mrs'
+
+  # ---------- 流媒体类（兜底前的视频/音乐分流） ----------
+
+  netflix: # Netflix
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/netflix.mrs'
+    path: './ruleset/netflix.mrs'
+  netflix_ip:
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geoip/netflix.mrs'
+    path: './ruleset/netflix_ip.mrs'
+  youtube_stream: # YouTube 视频流（域名与 Google 分开，避免误伤 Google 搜索）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/youtube.mrs'
+    path: './ruleset/youtube.mrs'
+  disney: # Disney+
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/disney.mrs'
+    path: './ruleset/disney.mrs'
+  hbo: # HBO Max
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/hbo.mrs'
+    path: './ruleset/hbo.mrs'
+  primevideo: # Amazon Prime Video
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/primevideo.mrs'
+    path: './ruleset/primevideo.mrs'
+  spotify: # Spotify
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/spotify.mrs'
+    path: './ruleset/spotify.mrs'
+  spotify_ip: # 官方仓库无此 geoip，取自 bett-rules
+    <<: *ruleset_ip
+    url: 'https://fastly.jsdelivr.net/gh/appshubcc/bett-rules@meta/geo/geoip/spotify.mrs'
+    path: './ruleset/spotify_ip.mrs'
+
+  # ---------- 功能类（DNS 分流用，不出现在路由规则中） ----------
+
+  googlefcm: # Google 推送（仅用于 fake-ip-filter 排除）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/googlefcm.mrs'
+    path: './ruleset/googlefcm.mrs'
+  fakeip_filter: # 不参与 fake-ip 的域名（官方仓库无此分类，取自 bett-rules）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/appshubcc/bett-rules@meta/geo/geosite/fakeip-filter.mrs'
+    path: './ruleset/fakeip_filter.mrs'
+  douyin: # 抖音（仅用于 DNS 分流）
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/douyin.mrs'
+    path: './ruleset/douyin.mrs'
+  category-ads: # 广告域名拦截
+    <<: *ruleset_domain
+    url: 'https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@meta/geo/geosite/category-ads.mrs'
+    path: './ruleset/category-ads.mrs'
+
+
+# ==================================================================================
+# 六、路由规则（自上而下匹配，命中即止）
+# ==================================================================================
+# · 顺序很重要：私有网络 / 国内直连在前，服务分流居中，兜底规则必须放在最后。
+# · `no-resolve` 表示匹配 IP 规则时不触发 DNS 解析，避免拖慢首次连接。
+# · 修改规则后可在面板的「规则」页查看命中情况，或用 log-level: info 调试。
+
+rules:
+  # ---------- 前置：私有网络与国内直连 ----------
+
+  - RULE-SET,private,DIRECT # 私有网络
+  - RULE-SET,geolocation-cn,DIRECT # 国内域名
+  - RULE-SET,games_cn,DIRECT # 国内游戏平台（已含 Steam 下载域名）
+  - RULE-SET,epicgames,DIRECT
+  - RULE-SET,nvidia_cn,DIRECT
+  - RULE-SET,apple_cn,DIRECT
+  - RULE-SET,microsoft_cn,DIRECT
+  - DOMAIN,fsend.cn,DIRECT
+  - DOMAIN,international-gfe.download.nvidia.com,DIRECT # GeForce Experience 国内下载
+
+  # ---------- 屏蔽国外 QUIC（UDP 443），避免代理 UDP 拥塞拖慢视频加载 ----------
+  # 国内域名与国内 IP 的 QUIC 不受影响
+
+  - AND,((NETWORK,UDP),(DST-PORT,443),(NOT,((OR,((RULE-SET,cn),(RULE-SET,cn_ip,no-resolve)))))),REJECT
+
+  # ---------- 广告拦截 ----------
+
+  - RULE-SET,category-ads,AdBlock
+
+  # ---------- 服务分流 ----------
+
+  - RULE-SET,google,Google
+  - RULE-SET,google_ip,Google,no-resolve
+  - RULE-SET,ai,AI
+  - RULE-SET,github,GitHub # GitHub 独立分流
+  - RULE-SET,microsoft,Microsoft
+  - RULE-SET,microsoft_ip,Microsoft,no-resolve
+  - RULE-SET,apple,Apple
+  - RULE-SET,apple_ip,Apple,no-resolve
+  - RULE-SET,telegram,Telegram
+  - RULE-SET,telegram_ip,Telegram,no-resolve
+  - RULE-SET,steam,Steam
+  - RULE-SET,steam_ip,Steam,no-resolve
+  - RULE-SET,tiktok,TikTok
+  - RULE-SET,tiktok_ip,TikTok,no-resolve
+  - RULE-SET,twitter,Twitter
+  - RULE-SET,twitter_ip,Twitter,no-resolve
+
+  # ---------- 流媒体分流（兜底前，交给「流媒体」组，可用解锁节点播放） ----------
+
+  - RULE-SET,netflix,流媒体
+  - RULE-SET,netflix_ip,流媒体,no-resolve
+  - RULE-SET,disney,流媒体
+  - RULE-SET,hbo,流媒体
+  - RULE-SET,primevideo,流媒体
+  - RULE-SET,youtube_stream,流媒体
+  - RULE-SET,spotify,流媒体
+  - RULE-SET,spotify_ip,流媒体,no-resolve
+
+  # ---------- 兜底 ----------
+
+  - RULE-SET,geolocation-!cn,默认代理 # 其余国外域名
+  - RULE-SET,cn_ip,DIRECT # 国内 IP
+  - RULE-SET,private_ip,DIRECT # 私有 IP 段
+  - MATCH,漏网之鱼 # 其余全部流量
